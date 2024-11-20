@@ -1,39 +1,47 @@
 import math
 import random
 
+import torch
+from agent.model import PolicyNetwork
+from gameContextNode import GameContextNode
+
 class Agent:
-    def __init__(self, model, simulations=100):
-        self.model = model.PolicyNetwork()  # Initialize the neural network
+    def __init__(self, model=None, nn_interface=None, simulations=100):
+        self.model = model if model else PolicyNetwork()  # Use provided model or initialize default
+        self.nn_interface = nn_interface
         self.simulations = simulations
         self.tree = {}
 
-    def mcts_search(self, game_context):
+    def mcts_search(self, gameContextNode):
         # Run simulations and select the best action
         for _ in range(self.simulations):
-            node = self.simulate(game_context)
+            node = self.simulate(gameContextNode)
             self.backpropagate(node)
 
         # Select action based on visit count or Q-value
-        best_action = max(self.tree[game_context]['actions'], key=lambda a: self.tree[game_context]['actions'][a]['visit_count'])
+        best_action = max(self.tree[gameContextNode]['actions'], key=lambda a: self.tree[gameContextNode]['actions'][a]['visit_count'])
         return best_action
 
-    def simulate(self, game_context):
-        node = game_context.clone()  # Simulate a copy of the game state
+    def simulate(self, gameContextNode):
 
-        while node.is_non_terminal():
-            # If unexplored state, evaluate with neural network
-            if node not in self.tree:
-                self.expand(node)
+        while gameContextNode.is_non_terminal():
+            if gameContextNode not in self.tree:
+                self.expand(gameContextNode)
                 break
 
-            # Use UCB1 for action selection within the tree
-            node = self.select_action(node)
+            # Select the next action and assign the resulting node as a child
+            next_action = self.select_action(gameContextNode)
+            next_game_context = gameContextNode.perform_action(next_action)
+            child_node = GameContextNode(next_game_context, parent=gameContextNode)
+            gameContextNode.children.append(child_node)
+            gameContextNode = child_node
 
-        return node
+        return gameContextNode
+
 
     def expand(self, node):
         state, policy_logits = self.evaluate(node)
-        actions = node.available_actions()
+        actions = node.actions
         self.tree[node] = {
             'actions': {a: {'visit_count': 0, 'q_value': 0} for a in actions},
             'policy': policy_logits,
@@ -61,16 +69,18 @@ class Agent:
                                                               self.tree[n]['actions'][action]['visit_count']
 
     def get_path(self, node):
-        # Retrieve the path taken in this simulation
         path = []
         while node:
             path.append(node)
             node = node.parent
-        return path
+        return path[::-1]  # Reverse to get the path from root to leaf
+
     
     def evaluate(self, node):
-        state = self.model.getObservation(node.game_context)  # Get the observation of the game context
-        policy_logits = self.model.predict_policy(state)  # This should return action probabilities (before softmax)
-        value = self.model.predict_value(state)  # This should return a scalar value for the state
+        state = self.nn_interface.getObservation(node.game_context)  # Get the observation of the game context
+        state_tensor = torch.tensor(state, dtype=torch.float32)  # Convert state to a tensor
+        policy_logits = self.model.predict_policy(state_tensor)  # This should return action probabilities (before softmax)
+        value = self.model.predict_value(state_tensor)  # This should return a scalar value for the state
         return value, policy_logits
+
     
