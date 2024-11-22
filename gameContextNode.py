@@ -1,100 +1,65 @@
+from typing import Optional, List
 import lib.slaythespire as slaythespire
-from lib.slaythespire import GameContext as CppGameContext  # Assume C++ binding is in `slaythespire`
 
 class GameContextNode:
-    def __init__(self, game_context, parent=None):
-        if game_context is None:
+    def __init__(self, game_context: slaythespire.GameContext, parent: Optional['GameContextNode'] = None):
+        if not game_context:
             raise ValueError("game_context cannot be None")
-        self.game_context = game_context
-        self.parent = parent
-        self.actions = self.available_actions()
-        self.children = []
+        self.game_context: slaythespire.GameContext = game_context
+        self.parent: Optional['GameContextNode'] = parent
+        self.actions: List[slaythespire.GameAction] = self.available_actions()
+        self.children: List['GameContextNode'] = []
 
-    def create_node(self, game_context):
-        """Create a new node in the tree for a given game context."""
-        node = {
-            'state': game_context,  # This holds the current game context
-            'actions': {}  # This will store actions and their q_values
-        }
-        return node
-    
-    def clone(self):
+    def clone(self) -> 'GameContextNode':
+        """Clone the current node and its game context."""
         cloned_game_context = self.game_context.clone()
-        cloned_wrapper = GameContextNode(cloned_game_context)
-        cloned_wrapper.tree = self.tree.copy()  # shallow copy tree if it’s sufficient
-        cloned_wrapper.current_node = self.current_node  # if mutable, copy manually
-        return cloned_wrapper
+        return GameContextNode(cloned_game_context, parent=self)
 
-    def available_actions(self):        
+    def available_actions(self) -> List[slaythespire.GameAction]:
+        """Retrieve all available actions in the current game state."""
         if self.game_context is None:
             return []
-        
         actions = slaythespire.GameAction.getAllActionsInState(self.game_context)
-        if actions is None or len(actions) == 0:
-            raise ValueError("No available actions found in the current game context.")
-        
-        return actions
-    
-    def perform_action(self, action):
+        return actions if actions else []  # Return empty list if no actions
+
+    def perform_action(self, action: slaythespire.GameAction) -> None:
+        """Execute the given action in the current game context."""
+        if action is None:
+            raise ValueError("Action cannot be None")
         action.execute(self.game_context)
-    
-    def is_non_terminal(self): 
+
+    def is_non_terminal(self) -> bool:
+        """Check if the game is still undecided."""
         return self.game_context.outcome == slaythespire.GameOutcome.UNDECIDED
-    
-    def add_action(self, action, q_value):
-        """Add an action to the current node with its corresponding Q-value."""
-        self.tree[self.current_node]['actions'][action] = {'q_value': q_value}
 
-    def get_action_q_value(self, action):
-        """Retrieve the Q-value for a given action in the current node."""
-        return self.tree[self.current_node]['actions'].get(action, {}).get('q_value', None)
-
-    def step(self, action):
-        """Perform the action and update the game context."""
-        self.game_context.step(action)
-        self.current_node = self.create_node(self.game_context)  # Update the current node to the new state
-    
-    def calculate_reward(self):
+    def calculate_reward(self) -> float:
         """
         Calculate the reward for the current game state.
         Returns:
             float: The reward value.
         """
-        # Example reward logic
         outcome = self.game_context.outcome
         if outcome == slaythespire.GameOutcome.PLAYER_VICTORY:
-            return 1.0  # Reward for winning
+            return 1.0
         elif outcome == slaythespire.GameOutcome.PLAYER_LOSS:
-            return -1.0  # Penalty for losing
-        else:
-            # Partial progress reward, e.g., based on health, score, or other metrics
-            return self.evaluate_partial_progress()
+            return -1.0
+        return self.evaluate_partial_progress()
 
-    def evaluate_partial_progress(self):
+    def evaluate_partial_progress(self) -> float:
         """
         Evaluate the progress of the player to assign a partial reward.
         Returns:
             float: Reward based on intermediate progress.
         """
-        # Example: Reward based on remaining health or progress in the game
-
-        max_health = self.game_context.max_hp
-        current_health = self.game_context.cur_hp
-
+        max_health: int = self.game_context.max_hp
+        current_health: int = self.game_context.cur_hp
         if max_health > 0:
-            # Reward for percentage of health remaining
-            health_reward = current_health / max_health
-            # Penalty for health lost compared to the starting point
-            health_penalty = (max_health - current_health) / max_health if max_health > current_health else 0
-            # Composite score: emphasize reward more than penalty
+            health_reward: float = current_health / max_health
+            health_penalty: float = (max_health - current_health) / max_health
             return health_reward - 0.5 * health_penalty
-        else:
-            return -1.0  # Default penalty if health metrics are invalid
-    
-    @property
-    def outcome(self):
-        """Access the outcome with additional logic if necessary."""
-        return self.game_context.outcome
+        return -1.0
 
-    # Additional custom methods or helper functions as needed
-    # E.g., methods to translate state for ML model input, custom logging, etc.
+    @property
+    def outcome(self) -> slaythespire.GameOutcome:
+        """Access the outcome of the current game context."""
+        return self.game_context.outcome
